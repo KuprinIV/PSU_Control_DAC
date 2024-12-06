@@ -43,6 +43,9 @@
 
 #define SAVE_EEPROM_DELAY_MS	2000
 #define SAVE_EEPROM_DELAY_CNTR	(SAVE_EEPROM_DELAY_MS/STATE_SCAN_PERIOD_MS)
+
+#define STEP_100MV				15
+#define STEP_20MA				15
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -58,6 +61,10 @@ TIM_HandleTypeDef htim14;
 /* USER CODE BEGIN PV */
 volatile uint8_t is_scan_event = 0;
 uint16_t voltageDacVal = 0, currentDacVal = 0;
+
+uint16_t voltageValStepArray[2] = {STEP_100MV, 5*STEP_100MV}, currentValStepArray[2] = {STEP_20MA, 5*STEP_20MA};
+uint8_t voltageValStepIdx = 0, currentValStepIdx = 0;
+uint16_t voltageValStep = STEP_100MV, currentValStep = STEP_20MA;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,7 +74,6 @@ static void MX_I2C1_Init(void);
 static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
 static void checkDacValLimits(uint16_t* val, uint16_t min, uint16_t max);
-static void updateValChangeStep(uint16_t* step_val, uint8_t* current_val_idx);
 static uint8_t checkSaveDacValueInEEPROM(uint16_t* delay_cntr);
 /* USER CODE END PFP */
 
@@ -84,8 +90,6 @@ int main(void)
 {
   /* USER CODE BEGIN 1 */
   EncoderState enc1 = {0, NotPressed, 0}, enc2 = {0, NotPressed, 0};
-  uint16_t voltageValStep = 5, currentValStep = 5;
-  uint8_t voltageValStepIdx = 0, currentValStepIdx = 0;
   uint16_t saveVoltageValDelayCntr = SAVE_EEPROM_DELAY_CNTR+1, saveCurrentValDelayCntr = SAVE_EEPROM_DELAY_CNTR+1; // no need to save already saved DAC value
   /* USER CODE END 1 */
 
@@ -163,7 +167,12 @@ int main(void)
 				  // set DAC value change step, if encoder button is pressed
 				  if(enc1.btn_state == Pressed)
 				  {
-					  updateValChangeStep(&voltageValStep, &voltageValStepIdx);
+					  voltageValStepIdx ^= 0x01;
+					  voltageValStep = voltageValStepArray[voltageValStepIdx];
+				  }
+				  else if(enc1.btn_state == LongPressed)
+				  {
+					  voltageValStep = 1; // set maximum accuracy
 				  }
 			  }
 			  else
@@ -198,7 +207,12 @@ int main(void)
 				  // set DAC value change step, if encoder button is pressed
 				  if(enc2.btn_state == Pressed)
 				  {
-					  updateValChangeStep(&currentValStep, &currentValStepIdx);
+					  currentValStepIdx ^= 0x01;
+					  currentValStep = currentValStepArray[currentValStepIdx];
+				  }
+				  else if(enc2.btn_state == LongPressed)
+				  {
+					  currentValStep = 1; // set maximum accuracy
 				  }
 			  }
 			  else
@@ -407,27 +421,6 @@ static void checkDacValLimits(uint16_t* val, uint16_t min, uint16_t max)
 	{
 		*val = max;
 	}
-}
-
-/**
-  * @brief  Update parameter change value step
-  * @param  step_val - parameter change step value pointer
-  * @retval None
-  */
-static void updateValChangeStep(uint16_t* step_val, uint8_t* current_val_idx)
-{
-	uint16_t step_vals[3] = {5, 25, 1};
-
-	if((*current_val_idx) < 2)
-	{
-		(*current_val_idx)++;
-	}
-	else
-	{
-		(*current_val_idx) = 0;
-	}
-
-	*step_val = step_vals[(*current_val_idx)];
 }
 
 /**
