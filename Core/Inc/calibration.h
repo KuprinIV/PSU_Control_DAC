@@ -14,7 +14,7 @@
 
 #define CURRENT_MIN_VAL			0
 #define CURRENT_MAX_VAL			4095
-#define CURRENT_MAX_INDEX		512
+#define CURRENT_MAX_INDEX		515
 
 extern const uint16_t current_set_10ma_step[];
 extern const uint16_t voltage_set_50mv_step[];
