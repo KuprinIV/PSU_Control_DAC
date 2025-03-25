@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "board_controls.h"
 #include "mcp4725.h"
+#include "calibration.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,19 +34,16 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define VOLTAGE_MIN_VAL			0
-#define VOLTAGE_MAX_VAL			4000
-#define CURRENT_MIN_VAL			0
-#define CURRENT_MAX_VAL			3800
-
 #define CURRENT_DAC_ADDR		0x60
 #define VOLTAGE_DAC_ADDR		0x61
 
 #define SAVE_EEPROM_DELAY_MS	2000
 #define SAVE_EEPROM_DELAY_CNTR	(SAVE_EEPROM_DELAY_MS/STATE_SCAN_PERIOD_MS)
 
-#define STEP_100MV				15
-#define STEP_20MA				15
+#define STEP_50MV				1
+#define STEP_250MV				5
+#define STEP_10MA				1
+#define STEP_100MA				10
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -61,10 +59,11 @@ TIM_HandleTypeDef htim14;
 /* USER CODE BEGIN PV */
 volatile uint8_t is_scan_event = 0;
 uint16_t voltageDacVal = 0, currentDacVal = 0;
+uint16_t voltageDacValIdx = 0, currentDacValIdx = 0;
 
-uint16_t voltageValStepArray[2] = {STEP_100MV, 5*STEP_100MV}, currentValStepArray[2] = {STEP_20MA, 5*STEP_20MA};
+uint16_t voltageValStepArray[2] = {STEP_50MV, STEP_250MV}, currentValStepArray[2] = {STEP_10MA, STEP_100MA};
 uint8_t voltageValStepIdx = 0, currentValStepIdx = 0;
-uint16_t voltageValStep = STEP_100MV, currentValStep = STEP_20MA;
+uint16_t voltageValStep = STEP_50MV, currentValStep = STEP_10MA;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,7 +73,9 @@ static void MX_I2C1_Init(void);
 static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
 static void checkDacValLimits(uint16_t* val, uint16_t min, uint16_t max);
+static void checkIndexValLimits(uint16_t* val, uint16_t min, uint16_t max);
 static uint8_t checkSaveDacValueInEEPROM(uint16_t* delay_cntr);
+static uint16_t getDacSavedValueIdx(uint16_t* values, uint16_t max_index, uint16_t saved_val);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -119,6 +120,7 @@ int main(void)
   {
 	  voltageDacVal = MCP4725_readDAC_register_and_EEPROM(VOLTAGE_DAC_ADDR, DAC_EEPROM_VALUE);
   }
+  voltageDacValIdx = getDacSavedValueIdx((uint16_t*)voltage_set_50mv_step, VOLTAGE_MAX_INDEX, voltageDacVal);
 
   HAL_Delay(100);
 
@@ -126,6 +128,7 @@ int main(void)
   {
 	  currentDacVal = MCP4725_readDAC_register_and_EEPROM(CURRENT_DAC_ADDR, DAC_EEPROM_VALUE);
   }
+  currentDacValIdx = getDacSavedValueIdx((uint16_t*)current_set_10ma_step, CURRENT_MAX_INDEX, currentDacVal);
   // start encoder scanning timer
   HAL_TIM_Base_Start_IT(&htim14);
   /* USER CODE END 2 */
@@ -151,8 +154,10 @@ int main(void)
 				  if(enc1.counter_offset != 0)
 				  {
 					  saveVoltageValDelayCntr = 0; // reset counter
-					  voltageDacVal += (enc1.counter_offset*voltageValStep);
-					  checkDacValLimits(&voltageDacVal, VOLTAGE_MIN_VAL, VOLTAGE_MAX_VAL);
+					  voltageDacValIdx += (enc1.counter_offset*voltageValStep);
+					  checkIndexValLimits(&voltageDacValIdx, 0, VOLTAGE_MAX_INDEX);
+					  voltageDacVal = voltage_set_50mv_step[voltageDacValIdx];
+//					  checkDacValLimits(&voltageDacVal, VOLTAGE_MIN_VAL, VOLTAGE_MAX_VAL);
 					  MCP4725_writeDAC_register(VOLTAGE_DAC_ADDR, voltageDacVal, 0);
 				  }
 				  else
@@ -191,8 +196,10 @@ int main(void)
 				  if(enc2.counter_offset != 0)
 				  {
 					  saveCurrentValDelayCntr = 0; // reset counter
-					  currentDacVal += (enc2.counter_offset*currentValStep);
-					  checkDacValLimits(&currentDacVal, CURRENT_MIN_VAL, CURRENT_MAX_VAL);
+					  currentDacValIdx += (enc2.counter_offset*currentValStep);
+					  checkIndexValLimits(&currentDacValIdx, 0, CURRENT_MAX_INDEX);
+					  currentDacVal = current_set_10ma_step[currentDacValIdx];
+//					  checkDacValLimits(&currentDacVal, CURRENT_MIN_VAL, CURRENT_MAX_VAL);
 					  MCP4725_writeDAC_register(CURRENT_DAC_ADDR, currentDacVal, 0);
 				  }
 				  else
@@ -423,6 +430,18 @@ static void checkDacValLimits(uint16_t* val, uint16_t min, uint16_t max)
 	}
 }
 
+static void checkIndexValLimits(uint16_t* val, uint16_t min, uint16_t max)
+{
+	if(*val < min || *val > 32767) // account, that val is unsigned
+	{
+		*val = min;
+	}
+	else if(*val > max)
+	{
+		*val = max;
+	}
+}
+
 /**
   * @brief  Check save DAC value delay after last encoder changed state
   * @param  delay_cntr - delay counter pointer
@@ -443,6 +462,24 @@ static uint8_t checkSaveDacValueInEEPROM(uint16_t* delay_cntr)
 	}
 
 	return res;
+}
+
+/**
+  * @brief  Get DAC saved value index
+  * @param  values - DAC values array
+  * @param  saved_val - DAC saved value
+  * @retval None
+  */
+static uint16_t getDacSavedValueIdx(uint16_t* values, uint16_t max_index, uint16_t saved_val)
+{
+	for(uint16_t i = 0; i < max_index; i++)
+	{
+		if(values[i] == saved_val)
+		{
+			return i;
+		}
+	}
+	return 0;
 }
 /* USER CODE END 4 */
 
