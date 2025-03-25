@@ -478,6 +478,13 @@ static uint16_t getDacSavedValueIdx(uint16_t* values, uint16_t max_index, uint16
 		{
 			return i;
 		}
+		else if(i > 0 && i < max_index)
+		{
+			if(values[i-1] < saved_val && values[i+1] > saved_val)
+			{
+				return i;
+			}
+		}
 	}
 	return 0;
 }
